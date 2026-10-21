@@ -86,9 +86,9 @@ internal sealed class ChallengeScreen : IScreen
 
     public void Update(GameTime gameTime, InputState input)
     {
-        _view.UpdateCamera(input, (float)gameTime.ElapsedGameTime.TotalSeconds);
+        _view.UpdateCamera(input, (float)gameTime.ElapsedGameTime.TotalSeconds, leftButtonPans: false);
         _hoverCell = _view.CellUnderMouse(input);
-        _hoverVisible = !input.UiWantsMouse;
+        _hoverVisible = !input.UiWantsMouse && !_view.IsPanning;
 
         switch (_phase)
         {
@@ -111,8 +111,11 @@ internal sealed class ChallengeScreen : IScreen
     {
         _view.Draw(_session);
         _overlay.Begin(_view.Camera);
-        _overlay.DrawRectangleOutline(_view.Camera, Area, BoardColors.Accent * (_phase == Phase.Placing ? 0.9f : 0.35f), 2f);
-        if (_phase == Phase.Placing && _hoverVisible && Area.Contains(_hoverCell))
+        // 盤面は繰り返して描いているので、枠は画面の中央に最も近い繰り返しの位置に描く
+        var area = Area;
+        area.Offset(_view.NearestCopyOffset(area.Center));
+        _overlay.DrawRectangleOutline(_view.Camera, area, BoardColors.Accent * (_phase == Phase.Placing ? 0.9f : 0.35f), 2f);
+        if (_phase == Phase.Placing && _hoverVisible && Area.Contains(_view.Wrap(_hoverCell)))
             _overlay.DrawRectangleOutline(_view.Camera, new Rectangle(_hoverCell.X, _hoverCell.Y, 1, 1), BoardColors.Highlight * 0.8f, 1.5f);
         _overlay.End();
     }
@@ -126,30 +129,25 @@ internal sealed class ChallengeScreen : IScreen
             Start();
             return;
         }
-        if (input.UiWantsMouse || !Area.Contains(_hoverCell))
+        var wrapped = _view.Wrap(_hoverCell);
+        if (input.UiWantsMouse || _view.IsPanning || !input.LeftPressed || !Area.Contains(wrapped))
             return;
 
-        var cell = new Cell(_hoverCell.X, _hoverCell.Y);
-        if (input.LeftPressed)
-        {
-            if (_seed.Remove(cell))
-            {
-                _session.SetCell(cell.X, cell.Y, false);
-            }
-            else if (_seed.Count >= Limit)
-            {
-                _message = $"この部門では {Limit} セルまでしか置けません。";
-            }
-            else
-            {
-                _seed.Add(cell);
-                _session.SetCell(cell.X, cell.Y, true);
-                _message = null;
-            }
-        }
-        else if (input.RightPressed && _seed.Remove(cell))
+        // 左クリックで、置いてあれば消し、無ければ置く
+        var cell = new Cell(wrapped.X, wrapped.Y);
+        if (_seed.Remove(cell))
         {
             _session.SetCell(cell.X, cell.Y, false);
+        }
+        else if (_seed.Count >= Limit)
+        {
+            _message = $"この部門では {Limit} セルまでしか置けません。";
+        }
+        else
+        {
+            _seed.Add(cell);
+            _session.SetCell(cell.X, cell.Y, true);
+            _message = null;
         }
     }
 
@@ -208,7 +206,7 @@ internal sealed class ChallengeScreen : IScreen
     {
         float s = UiSetup.Scale;
         ImGui.SetNextWindowPos(new NumVector2(10 * s, 40 * s), ImGuiCond.FirstUseEver);
-        if (ImGui.Begin("記録チャレンジ", ImGuiWindowFlags.AlwaysAutoResize))
+        if (Panels.Begin("記録チャレンジ", ImGuiWindowFlags.AlwaysAutoResize))
         {
             ImGui.PushTextWrapPos(320 * s);
             switch (_phase)
@@ -234,7 +232,7 @@ internal sealed class ChallengeScreen : IScreen
             ImGui.Separator();
             if (ImGui.Button("枠に寄る")) FocusArea();
             ImGui.SameLine();
-            if (ImGui.Button("全体を見る")) _view.FitAll(_services.Device.Viewport);
+            if (ImGui.Button("引いて見る")) _view.ZoomOutFully();
             ImGui.PopTextWrapPos();
         }
         ImGui.End();
@@ -243,7 +241,7 @@ internal sealed class ChallengeScreen : IScreen
     private void DrawPlacing(float s)
     {
         ImGui.TextUnformatted("中央の枠の中に、決められた数までセルを置いて「開始」。盤面が落ち着くまでの世代数(寿命)を競います。");
-        ImGui.TextDisabled("左クリックで置く・消す、右クリックで消す");
+        ImGui.TextDisabled("左クリックで置く・消す。右ドラッグで表示を動かす");
 
         ImGui.SetNextItemWidth(180 * s);
         if (ImGui.Combo("部門", ref _categoryIndex, CategoryLabels, CategoryLabels.Length))

@@ -18,7 +18,7 @@ internal sealed class ObservationPanel
         var io = ImGui.GetIO();
         ImGui.SetNextWindowPos(new NumVector2(io.DisplaySize.X - 10 * s, 40 * s), ImGuiCond.Always, new NumVector2(1, 0));
         ImGui.SetNextWindowSize(new NumVector2(300 * s, 0), ImGuiCond.Always);
-        if (ImGui.Begin($"観察##{id}", ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoResize))
+        if (Panels.Begin($"観察##{id}", ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoResize))
         {
             var stats = session.Stats;
             Row("世代", session.Generation.ToString("N0"));

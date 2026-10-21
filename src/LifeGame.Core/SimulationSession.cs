@@ -103,11 +103,10 @@ public sealed class SimulationSession
         LoadPacked(generation: 0);
     }
 
+    /// <summary>セルを書き換える。盤面の外の座標は、反対側へ回り込ませる(トーラス)。</summary>
     public void SetCell(int x, int y, bool alive)
     {
-        if (x < 0 || y < 0 || x >= Width || y >= Height)
-            return;
-        Current.SetCell(x, y, alive);
+        Current.SetCell(Wrap(x, Width), Wrap(y, Height), alive);
         MarkEdited();
     }
 
@@ -115,11 +114,7 @@ public sealed class SimulationSession
     public void Stamp(Pattern pattern, int x, int y, bool alive = true)
     {
         foreach (var cell in pattern.Cells)
-        {
-            int cx = (int)(((long)x + cell.X) % Width + Width) % Width;
-            int cy = (int)(((long)y + cell.Y) % Height + Height) % Height;
-            Current.SetCell(cx, cy, alive);
-        }
+            Current.SetCell(Wrap((long)x + cell.X, Width), Wrap((long)y + cell.Y, Height), alive);
         MarkEdited();
     }
 
@@ -211,6 +206,8 @@ public sealed class SimulationSession
         Current.CopyTo(_packed);
         _packedStale = false;
     }
+
+    private static int Wrap(long value, int size) => (int)((value % size + size) % size);
 
     private void RefreshStats()
     {

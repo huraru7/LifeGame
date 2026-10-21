@@ -20,7 +20,8 @@ namespace LifeGame.App.Screens;
 /// </summary>
 internal sealed class SandboxScreen : IScreen
 {
-    private const int BoardSize = 2048;
+    // 盤面は繰り返して描くので、引いて見ても同じ場所が2回映らないよう、画面より十分に広くする
+    private const int BoardSize = 4096;
     private const double RandomDensity = 0.3;
     private const string SavedCategory = "保存した配置";
     private static readonly TimeSpan MaxSpeedBudget = TimeSpan.FromMilliseconds(10);
@@ -31,6 +32,8 @@ internal sealed class SandboxScreen : IScreen
         Draw,
         Erase,
         Stamp,
+        // 左ドラッグで表示を動かす(盤面は変えない)
+        Move,
     }
 
     private readonly AppServices _services;
@@ -38,7 +41,8 @@ internal sealed class SandboxScreen : IScreen
     private readonly BoardView _view;
     private readonly BoardOverlay _overlay;
     private readonly ObservationPanel _observation = new();
-    private readonly UndoHistory _history = new();
+    // 1手で盤面まるごと(4096²で2MB)を残すので、手数を抑える
+    private readonly UndoHistory _history = new(capacity: 30);
     private Tool _tool = Tool.Stamp;
     private Pattern _stamp = PatternLibrary.Find("グライダー").Pattern;
     // 速度の段階を超えて、1フレームに使える時間いっぱいまで進める
@@ -46,7 +50,6 @@ internal sealed class SandboxScreen : IScreen
     private bool _firstEnter = true;
 
     private bool _stroking;
-    private bool _strokeWithLeft;
     private bool _strokeAlive;
     private Point _lastStrokeCell;
     private Point _hoverCell;
@@ -120,7 +123,7 @@ internal sealed class SandboxScreen : IScreen
     {
         float deltaSeconds = (float)gameTime.ElapsedGameTime.TotalSeconds;
         HandleShortcuts(input);
-        _view.UpdateCamera(input, deltaSeconds);
+        _view.UpdateCamera(input, deltaSeconds, leftButtonPans: _tool == Tool.Move);
         HandleBoardMouse(input);
 
         if (!_session.Paused)
@@ -140,7 +143,7 @@ internal sealed class SandboxScreen : IScreen
     public void Draw(GameTime gameTime)
     {
         _view.Draw(_session);
-        if (!_hoverVisible)
+        if (!_hoverVisible || _tool == Tool.Move)
             return;
 
         _overlay.Begin(_view.Camera);
@@ -148,7 +151,7 @@ internal sealed class SandboxScreen : IScreen
         {
             _overlay.DrawPattern(_view.Camera, _stamp, StampOrigin(_hoverCell), BoardColors.Accent * 0.6f);
         }
-        else if (_view.Camera.Zoom >= 6f && _view.Contains(_hoverCell))
+        else if (_view.Camera.Zoom >= 6f)
         {
             var color = _tool == Tool.Draw ? BoardColors.Highlight : BoardColors.Accent;
             _overlay.DrawRectangleOutline(_view.Camera, new Rectangle(_hoverCell.X, _hoverCell.Y, 1, 1), color * 0.8f, 1.5f);
@@ -175,6 +178,8 @@ internal sealed class SandboxScreen : IScreen
             _tool = Tool.Erase;
         if (input.Pressed(Keys.D3))
             _tool = Tool.Stamp;
+        if (input.Pressed(Keys.D4))
+            _tool = Tool.Move;
         if (input.Pressed(Keys.Q))
             _stamp = _stamp.RotateClockwise().RotateClockwise().RotateClockwise();
         if (input.Pressed(Keys.E))
@@ -192,7 +197,7 @@ internal sealed class SandboxScreen : IScreen
         if (input.Ctrl && input.Pressed(Keys.Y))
             Redo();
         if (input.Pressed(Keys.Home))
-            _view.FitAll(_services.Device.Viewport);
+            _view.ZoomOutFully();
         if (!input.Ctrl && input.Pressed(Keys.R))
             Randomize();
         if (input.Pressed(Keys.Delete))
@@ -201,13 +206,13 @@ internal sealed class SandboxScreen : IScreen
 
     private void HandleBoardMouse(InputState input)
     {
+        // 座標は盤面の繰り返しのどこでもよい(書き換えるときに盤面の中へ回り込む)
         _hoverCell = _view.CellUnderMouse(input);
-        _hoverVisible = !input.UiWantsMouse;
+        _hoverVisible = !input.UiWantsMouse && !_view.IsPanning;
 
         if (_stroking)
         {
-            bool held = _strokeWithLeft ? input.LeftDown : input.RightDown;
-            if (!held)
+            if (!input.LeftDown)
             {
                 _stroking = false;
                 return;
@@ -218,33 +223,27 @@ internal sealed class SandboxScreen : IScreen
             return;
         }
 
-        if (input.UiWantsMouse || !_view.Contains(_hoverCell))
+        if (input.UiWantsMouse || _view.IsPanning || !input.LeftPressed)
             return;
 
-        if (input.LeftPressed)
+        switch (_tool)
         {
-            if (_tool == Tool.Stamp)
-            {
+            case Tool.Stamp:
                 RecordUndo();
                 var origin = StampOrigin(_hoverCell);
                 _session.Stamp(_stamp, origin.X, origin.Y);
-            }
-            else
-            {
-                BeginStroke(withLeft: true, alive: _tool == Tool.Draw);
-            }
-        }
-        else if (input.RightPressed)
-        {
-            BeginStroke(withLeft: false, alive: false);
+                break;
+            case Tool.Draw:
+            case Tool.Erase:
+                BeginStroke(alive: _tool == Tool.Draw);
+                break;
         }
     }
 
-    private void BeginStroke(bool withLeft, bool alive)
+    private void BeginStroke(bool alive)
     {
         RecordUndo();
         _stroking = true;
-        _strokeWithLeft = withLeft;
         _strokeAlive = alive;
         _lastStrokeCell = _hoverCell;
         _session.SetCell(_hoverCell.X, _hoverCell.Y, alive);
@@ -275,7 +274,7 @@ internal sealed class SandboxScreen : IScreen
     {
         float s = UiSetup.Scale;
         ImGui.SetNextWindowPos(new NumVector2(10 * s, 40 * s), ImGuiCond.FirstUseEver);
-        if (ImGui.Begin("サンドボックス", ImGuiWindowFlags.AlwaysAutoResize))
+        if (Panels.Begin("サンドボックス", ImGuiWindowFlags.AlwaysAutoResize))
         {
             if (ImGui.Button(_session.Paused ? "再生 (Space)" : "一時停止 (Space)", new NumVector2(140 * s, 0)))
                 _session.Paused = !_session.Paused;
@@ -301,6 +300,8 @@ internal sealed class SandboxScreen : IScreen
             if (ImGui.RadioButton("消す (2)", _tool == Tool.Erase)) _tool = Tool.Erase;
             ImGui.SameLine();
             if (ImGui.RadioButton("スタンプ (3)", _tool == Tool.Stamp)) _tool = Tool.Stamp;
+            ImGui.SameLine();
+            if (ImGui.RadioButton("移動 (4)", _tool == Tool.Move)) _tool = Tool.Move;
 
             if (_tool == Tool.Stamp)
             {
@@ -312,9 +313,13 @@ internal sealed class SandboxScreen : IScreen
                 ImGui.SameLine();
                 if (ImGui.Button("反転 (X)")) _stamp = _stamp.FlipHorizontal();
             }
+            else if (_tool == Tool.Move)
+            {
+                ImGui.TextDisabled("左ドラッグで表示を動かします");
+            }
             else
             {
-                ImGui.TextDisabled("右ドラッグでも消せます");
+                ImGui.TextDisabled("右ドラッグで表示を動かせます");
             }
 
             ImGui.Separator();
@@ -334,7 +339,7 @@ internal sealed class SandboxScreen : IScreen
             ImGui.SameLine();
             if (ImGui.Button("全消去 (Delete)")) Clear();
             ImGui.SameLine();
-            if (ImGui.Button("全体 (Home)")) _view.FitAll(_services.Device.Viewport);
+            if (ImGui.Button("引いて見る (Home)")) _view.ZoomOutFully();
 
             if (ImGui.Button("盤面を保存…")) _openSavePopup = true;
             ImGui.SameLine();

@@ -49,6 +49,17 @@ public class SimulationSessionTests
     }
 
     [Fact]
+    public void SetCell_OutsideBoard_WrapsAround()
+    {
+        var session = new SimulationSession(64, 64, SimulatorCatalog.All, initialSimulator: 1);
+        session.SetCell(-1, -1, true);
+        session.SetCell(64 * 3 + 5, 7, true);
+        var board = session.GetPackedBoard();
+        Assert.True(PackedBoard.GetCell(board, 64, 63, 63));
+        Assert.True(PackedBoard.GetCell(board, 64, 5, 7));
+    }
+
+    [Fact]
     public void Tick_AdvancesByAccumulatedSpeed()
     {
         var session = new SimulationSession(64, 64, SimulatorCatalog.All, initialSimulator: 1);

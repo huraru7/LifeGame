@@ -13,6 +13,9 @@ internal interface IBoardRenderer : IDisposable
 
     void Upload(ReadOnlySpan<ulong> packed);
 
-    /// <summary>盤面を、盤面座標 (0, 0)〜(幅, 高さ) の四角形として描く。</summary>
-    void Draw(SpriteBatch spriteBatch, Matrix boardToScreen, Viewport viewport);
+    /// <summary>
+    /// 盤面座標の範囲 visibleArea を描く。範囲が盤面の外にはみ出した分は、盤面を繰り返して描く
+    /// (盤面の端は反対側とつながっているので、継ぎ目なく続いて見える)。
+    /// </summary>
+    void Draw(SpriteBatch spriteBatch, Matrix boardToScreen, Viewport viewport, Rectangle visibleArea);
 }

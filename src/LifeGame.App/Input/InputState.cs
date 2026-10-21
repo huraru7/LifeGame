@@ -34,14 +34,13 @@ internal sealed class InputState
 
     public bool LeftDown => Mouse.LeftButton == ButtonState.Pressed;
 
-    public bool RightDown => Mouse.RightButton == ButtonState.Pressed;
-
     public bool LeftPressed => LeftDown && PreviousMouse.LeftButton == ButtonState.Released;
 
-    public bool RightPressed => RightDown && PreviousMouse.RightButton == ButtonState.Released;
+    public bool IsDown(MouseButton button) => State(Mouse, button) == ButtonState.Pressed;
 
-    public bool MiddleDragging =>
-        Mouse.MiddleButton == ButtonState.Pressed && PreviousMouse.MiddleButton == ButtonState.Pressed;
+    /// <summary>このフレームで押されたか。</summary>
+    public bool WasPressed(MouseButton button) =>
+        State(Mouse, button) == ButtonState.Pressed && State(PreviousMouse, button) == ButtonState.Released;
 
     public void Update(bool uiWantsMouse, bool uiWantsKeyboard)
     {
@@ -58,4 +57,18 @@ internal sealed class InputState
         !UiWantsKeyboard && Keyboard.IsKeyDown(key) && PreviousKeyboard.IsKeyUp(key);
 
     public bool Held(Keys key) => !UiWantsKeyboard && Keyboard.IsKeyDown(key);
+
+    private static ButtonState State(MouseState mouse, MouseButton button) => button switch
+    {
+        MouseButton.Left => mouse.LeftButton,
+        MouseButton.Right => mouse.RightButton,
+        _ => mouse.MiddleButton,
+    };
+}
+
+internal enum MouseButton
+{
+    Left,
+    Right,
+    Middle,
 }

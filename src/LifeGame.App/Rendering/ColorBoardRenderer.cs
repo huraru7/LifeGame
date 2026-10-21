@@ -46,10 +46,10 @@ internal sealed class ColorBoardRenderer : IBoardRenderer
         LastUploadMilliseconds = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
     }
 
-    public void Draw(SpriteBatch spriteBatch, Matrix boardToScreen, Viewport viewport)
+    public void Draw(SpriteBatch spriteBatch, Matrix boardToScreen, Viewport viewport, Rectangle visibleArea)
     {
-        spriteBatch.Begin(samplerState: SamplerState.PointClamp, transformMatrix: boardToScreen);
-        spriteBatch.Draw(_texture, new Rectangle(0, 0, _width, _height), Color.White);
+        spriteBatch.Begin(samplerState: SamplerState.PointWrap, transformMatrix: boardToScreen);
+        spriteBatch.Draw(_texture, visibleArea, visibleArea, Color.White);
         spriteBatch.End();
     }
 

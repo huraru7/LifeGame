@@ -6,19 +6,25 @@ namespace LifeGame.App.Board;
 /// <summary>
 /// 盤面の拡大率と表示位置。盤面座標は1セル = 1単位。
 /// 拡大・縮小は目標の倍率へ滑らかに近づける(マウスの下の位置は動かさない)。
+/// 盤面は切れ目なく繰り返して描くので、表示位置はどこまでも動かせる。
 /// </summary>
 internal sealed class Camera2D
 {
-    private const float MinZoom = 0.02f;
+    private const float AbsoluteMinZoom = 0.02f;
     private const float MaxZoom = 96f;
     // 大きいほど目標の倍率に早く追いつく
     private const float ZoomSharpness = 16f;
+    // 表示位置がこれだけ盤面の枚数ぶん離れたら、盤面1枚ぶんずつ戻す(浮動小数点の精度を保つため)
+    private const int WrapDistanceInBoards = 8;
 
     private float _targetZoom = 1f;
     private Vector2 _zoomAnchor;
 
     /// <summary>1セルあたりの画面ピクセル数。</summary>
     public float Zoom { get; private set; } = 1f;
+
+    /// <summary>縮小できる限界。盤面の同じ場所が画面に2回映らない倍率にする。</summary>
+    public float MinZoom { get; private set; } = AbsoluteMinZoom;
 
     /// <summary>画面の左上に映る盤面座標。</summary>
     public Vector2 Position { get; private set; }
@@ -35,21 +41,40 @@ internal sealed class Camera2D
         _zoomAnchor = screen;
     }
 
+    /// <summary>画面の中央を中心に、縮小できる限界まで引く。</summary>
+    public void ZoomOutFully(Viewport viewport)
+    {
+        _targetZoom = MinZoom;
+        _zoomAnchor = new Vector2(viewport.Width, viewport.Height) / 2f;
+    }
+
+    /// <summary>縮小の限界を変える。今の倍率が限界より小さければ、画面の中央を中心に合わせる。</summary>
+    public void SetMinZoom(float minZoom, Viewport viewport)
+    {
+        MinZoom = MathHelper.Clamp(minZoom, AbsoluteMinZoom, MaxZoom);
+        _targetZoom = Math.Max(_targetZoom, MinZoom);
+        if (Zoom < MinZoom)
+            SetZoomAround(new Vector2(viewport.Width, viewport.Height) / 2f, MinZoom);
+    }
+
     public void Pan(Vector2 screenDelta)
     {
         Position -= screenDelta / Zoom;
     }
 
-    public void Update(float deltaSeconds)
+    public void Update(float deltaSeconds, int boardWidth, int boardHeight)
     {
         if (MathF.Abs(_targetZoom - Zoom) <= Zoom * 1e-4f)
         {
             SetZoomAround(_zoomAnchor, _targetZoom);
-            return;
         }
-        // 倍率の比で近づけるので、拡大でも縮小でも同じ速さに感じる
-        float t = 1f - MathF.Exp(-deltaSeconds * ZoomSharpness);
-        SetZoomAround(_zoomAnchor, Zoom * MathF.Pow(_targetZoom / Zoom, t));
+        else
+        {
+            // 倍率の比で近づけるので、拡大でも縮小でも同じ速さに感じる
+            float t = 1f - MathF.Exp(-deltaSeconds * ZoomSharpness);
+            SetZoomAround(_zoomAnchor, Zoom * MathF.Pow(_targetZoom / Zoom, t));
+        }
+        WrapFarPosition(boardWidth, boardHeight);
     }
 
     /// <summary>
@@ -70,6 +95,18 @@ internal sealed class Camera2D
         Vector2 anchor = ScreenToBoard(screen);
         Zoom = zoom;
         Position = anchor - screen / Zoom;
+    }
+
+    // 盤面1枚ぶんずらしても見た目は同じ(繰り返して描いている)なので、遠くへ行きすぎたら戻す
+    private void WrapFarPosition(int boardWidth, int boardHeight)
+    {
+        float x = Position.X;
+        float y = Position.Y;
+        if (MathF.Abs(x) > boardWidth * WrapDistanceInBoards)
+            x -= MathF.Floor(x / boardWidth) * boardWidth;
+        if (MathF.Abs(y) > boardHeight * WrapDistanceInBoards)
+            y -= MathF.Floor(y / boardHeight) * boardHeight;
+        Position = new Vector2(x, y);
     }
 }
 

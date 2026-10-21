@@ -8,6 +8,7 @@
 #endif
 
 // 1セル1ピクセルの画像(ミップマップつき)から盤面を描く。
+// テクスチャ座標は 0〜1 の外にもなり、サンプラーの Wrap で盤面が繰り返される(どこまでも続いて見える)。
 // 拡大時: セルを隙間つきの四角として描き、縁は1ピクセル幅で滑らかにする。
 // 縮小時: 画面の1ピクセルが覆う範囲の生存密度を、ミップマップから読んで明るさにする(砂嵐やチラつきが出ない)。
 
@@ -24,8 +25,8 @@ sampler2D CellSampler = sampler_state
 	MinFilter = Linear;
 	MagFilter = Point;
 	MipFilter = Linear;
-	AddressU = Clamp;
-	AddressV = Clamp;
+	AddressU = Wrap;
+	AddressV = Wrap;
 };
 
 struct VertexShaderInput
