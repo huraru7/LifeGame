@@ -10,13 +10,16 @@ public static class ChallengeRules
     public const int AreaSize = 16;
 
     /// <summary>
-    /// 盤面の一辺。飛んでいくグライダーは4世代で斜めに1マス進むので、
-    /// 4096 なら約16,000世代たつまで盤面を一周して戻ってこない。
+    /// 表示する盤面の一辺。演算は範囲の外にも続く方式(Sparse tiles)なので、
+    /// 飛んでいくグライダーは戻ってこない。範囲の外へ出たものも計算と人口に含まれる。
     /// </summary>
     public const int BoardSize = 4096;
 
-    /// <summary>これ以上続いた場合は判定を打ち切る(グライダーが一周して戻ってくる前)。</summary>
-    public const long MaxGenerations = 15_000;
+    /// <summary>
+    /// これ以上続いた場合は判定を打ち切る。グライダーが地平線(範囲から16,384マス先)に届いて消えるのは
+    /// 約70,000世代後なので、それより前に打ち切り、消したことが結果に影響しないようにする。
+    /// </summary>
+    public const long MaxGenerations = 50_000;
 
     public const int MaxPopulationPeriod = 60;
 

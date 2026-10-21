@@ -15,10 +15,12 @@ public class SimulationSessionTests
         var reference = new NaiveSimulator(width, height);
         reference.Load(session.GetPackedBoard());
 
-        // 方式を順に切り替えながら進めても、1つの方式で進めたのと同じ結果になる
-        for (int round = 0; round < SimulatorCatalog.All.Count * 2; round++)
+        // トーラスの方式を順に切り替えながら進めても、1つの方式で進めたのと同じ結果になる
+        int[] toroidal = Enumerable.Range(0, SimulatorCatalog.All.Count)
+            .Where(i => SimulatorCatalog.All[i](64, 64).WrapsAround).ToArray();
+        for (int round = 0; round < toroidal.Length * 2; round++)
         {
-            session.SwitchSimulator(round % SimulatorCatalog.All.Count);
+            session.SwitchSimulator(toroidal[round % toroidal.Length]);
             session.Advance(20);
             for (int i = 0; i < 20; i++)
                 reference.Step();
@@ -26,7 +28,7 @@ public class SimulationSessionTests
 
         var expected = new ulong[PackedBoard.Length(width, height)];
         reference.CopyTo(expected);
-        Assert.Equal(SimulatorCatalog.All.Count * 2 * 20, session.Generation);
+        Assert.Equal(toroidal.Length * 2 * 20, session.Generation);
         Assert.True(session.GetPackedBoard().SequenceEqual(expected));
     }
 

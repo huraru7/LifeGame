@@ -9,8 +9,11 @@ public class SimulatorEquivalenceTests
     public static TheoryData<int, int, int> Cases()
     {
         var data = new TheoryData<int, int, int>();
+        // トーラスの方式どうしを比べる(範囲の外に盤面が続く方式は SparseLifeSimulatorTests で確かめる)
         for (int index = 1; index < SimulatorCatalog.All.Count; index++)
         {
+            if (!SimulatorCatalog.All[index](64, 64).WrapsAround)
+                continue;
             data.Add(index, 64, 64);
             // 1行のワード数がVectorの幅で割り切れない(端数をスカラーで処理する経路)
             data.Add(index, 320, 70);

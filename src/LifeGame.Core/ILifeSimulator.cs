@@ -1,7 +1,7 @@
 namespace LifeGame.Core;
 
 /// <summary>
-/// ライフゲームの演算方式。盤面は端が反対側とつながるトーラスとして扱う。
+/// ライフゲームの演算方式。Width × Height は、盤面の受け渡しに使う範囲(表示する範囲)。
 /// 盤面の受け渡しは、どの方式でも共通の「詰めた形式」(<see cref="PackedBoard"/>)で行う。
 /// </summary>
 public interface ILifeSimulator
@@ -11,6 +11,12 @@ public interface ILifeSimulator
     int Width { get; }
 
     int Height { get; }
+
+    /// <summary>
+    /// 盤面の端が反対側とつながっている(トーラス)か。false なら範囲の外にも盤面が続いていて、
+    /// 範囲の外の座標にもセルを置ける。
+    /// </summary>
+    bool WrapsAround => true;
 
     /// <summary>詰めた形式の盤面を読み込む。</summary>
     void Load(ReadOnlySpan<ulong> packed);

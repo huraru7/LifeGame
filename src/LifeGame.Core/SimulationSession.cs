@@ -103,19 +103,36 @@ public sealed class SimulationSession
         LoadPacked(generation: 0);
     }
 
-    /// <summary>セルを書き換える。盤面の外の座標は、反対側へ回り込ませる(トーラス)。</summary>
+    /// <summary>
+    /// セルを書き換える。トーラスの方式では、範囲の外の座標は反対側へ回り込ませる。
+    /// 範囲の外にも盤面が続く方式では、そのまま範囲の外に置く。
+    /// </summary>
     public void SetCell(int x, int y, bool alive)
     {
-        Current.SetCell(Wrap(x, Width), Wrap(y, Height), alive);
+        SetCellCore(x, y, alive);
         MarkEdited();
     }
 
-    /// <summary>パターンの左上を (x, y) に合わせて置く。盤面の端からはみ出た分は反対側へ回り込む(トーラス)。</summary>
-    public void Stamp(Pattern pattern, int x, int y, bool alive = true)
+    /// <summary>パターンの左上を (x, y) に合わせて置く。clip を渡すと、その範囲に入るセルだけを置く。</summary>
+    public void Stamp(Pattern pattern, int x, int y, bool alive = true, CellRegion? clip = null)
     {
         foreach (var cell in pattern.Cells)
-            Current.SetCell(Wrap((long)x + cell.X, Width), Wrap((long)y + cell.Y, Height), alive);
+        {
+            long cx = (long)x + cell.X;
+            long cy = (long)y + cell.Y;
+            if (clip is { } region && !region.Contains(cx, cy))
+                continue;
+            SetCellCore(cx, cy, alive);
+        }
         MarkEdited();
+    }
+
+    /// <summary>region の中だけを、生存率 density のランダムな配置にする(外は空にする)。</summary>
+    public void RandomizeRegion(double density, int seed, CellRegion region)
+    {
+        Array.Clear(_packed);
+        PackedBoard.Randomize(_packed, Width, Height, density, seed, region.Left, region.Top, region.Width, region.Height);
+        LoadPacked(generation: 0);
     }
 
     public BoardSnapshot CaptureSnapshot()
@@ -205,6 +222,14 @@ public sealed class SimulationSession
             return;
         Current.CopyTo(_packed);
         _packedStale = false;
+    }
+
+    private void SetCellCore(long x, long y, bool alive)
+    {
+        if (Current.WrapsAround)
+            Current.SetCell(Wrap(x, Width), Wrap(y, Height), alive);
+        else
+            Current.SetCell((int)x, (int)y, alive);
     }
 
     private static int Wrap(long value, int size) => (int)((value % size + size) % size);
