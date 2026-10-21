@@ -12,8 +12,13 @@ namespace LifeGame.Core;
 /// </summary>
 public sealed class SimulationSession
 {
-    // 1フレームあたりに進める世代数の段階
-    private static readonly double[] SpeedLevels = [0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64];
+    // 1世代あたりの秒数の段階(遅い順)。時間で決めるので、画面のFPSによらず同じ速さになる。
+    // 0.05秒より速い側は、1秒あたり60〜1920世代
+    private static readonly double[] SpeedLevels =
+        [2, 1, 0.8, 0.5, 0.4, 0.25, 0.1, 0.05, 1.0 / 60, 1.0 / 120, 1.0 / 240, 1.0 / 480, 1.0 / 960, 1.0 / 1920];
+
+    // 処理が追いつかずに時間が溜まっても、1回にこれ以上は進めない(溜まった分は捨てる)
+    private const int MaxStepsPerTick = 4096;
 
     private readonly IReadOnlyList<Func<int, int, ILifeSimulator>> _factories;
     private readonly ulong[] _packed;
@@ -34,6 +39,7 @@ public sealed class SimulationSession
         Current = factories[initialSimulator](width, height);
     }
 
+    /// <summary>速度の段階(1世代あたりの秒数、遅い順)。</summary>
     public static IReadOnlyList<double> Speeds => SpeedLevels;
 
     public int Width { get; }
@@ -50,10 +56,10 @@ public sealed class SimulationSession
 
     public bool Paused { get; set; }
 
-    /// <summary>SpeedLevels の何番目の速さで再生するか。</summary>
-    public int SpeedIndex { get; set; } = 3;
+    /// <summary>SpeedLevels の何番目の速さで再生するか。最初は 0.05秒/世代(1秒に20世代)。</summary>
+    public int SpeedIndex { get; set; } = 7;
 
-    public double GenerationsPerFrame => SpeedLevels[SpeedIndex];
+    public double SecondsPerGeneration => SpeedLevels[SpeedIndex];
 
     /// <summary>1世代の演算時間(ミリ秒)の指数移動平均。</summary>
     public double AverageStepMilliseconds { get; private set; }
@@ -147,15 +153,15 @@ public sealed class SimulationSession
         LoadPacked(snapshot.Generation);
     }
 
-    /// <summary>再生速度に応じて、このフレームの分だけ世代を進める。一時停止中は何もしない。</summary>
-    public void Tick()
+    /// <summary>前のフレームからの経過時間 elapsed の分だけ、再生速度に応じて世代を進める。一時停止中は何もしない。</summary>
+    public void Tick(TimeSpan elapsed)
     {
         if (Paused)
             return;
 
-        _stepAccumulator += GenerationsPerFrame;
-        int steps = (int)_stepAccumulator;
-        _stepAccumulator -= steps;
+        _stepAccumulator += elapsed.TotalSeconds / SecondsPerGeneration;
+        int steps = (int)Math.Min(_stepAccumulator, MaxStepsPerTick);
+        _stepAccumulator = steps == MaxStepsPerTick ? 0 : _stepAccumulator - steps;
         Advance(steps);
     }
 

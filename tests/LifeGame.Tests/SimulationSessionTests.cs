@@ -65,11 +65,15 @@ public class SimulationSessionTests
     public void Tick_AdvancesByAccumulatedSpeed()
     {
         var session = new SimulationSession(64, 64, SimulatorCatalog.All, initialSimulator: 1);
-        session.ChangeSpeed(-2); // 1フレームに 0.25 世代
+        session.SpeedIndex = SimulationSession.Speeds.ToList().IndexOf(0.25); // 0.25秒/世代
 
-        for (int i = 0; i < 8; i++)
-            session.Tick();
+        // 0.1秒のフレームを10回(1秒)で4世代。端数は次のフレームへ持ち越す
+        for (int i = 0; i < 10; i++)
+            session.Tick(TimeSpan.FromSeconds(0.1));
+        Assert.Equal(4, session.Generation);
 
-        Assert.Equal(2, session.Generation);
+        session.Paused = true;
+        session.Tick(TimeSpan.FromSeconds(5));
+        Assert.Equal(4, session.Generation);
     }
 }

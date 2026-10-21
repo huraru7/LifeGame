@@ -132,7 +132,7 @@ internal sealed class SandboxScreen : IScreen
             if (_maxSpeed)
                 _session.AdvanceFor(MaxSpeedBudget);
             else
-                _session.Tick();
+                _session.Tick(gameTime.ElapsedGameTime);
         }
 
         DrawToolPanel();
@@ -290,7 +290,7 @@ internal sealed class SandboxScreen : IScreen
 
             int speeds = SimulationSession.Speeds.Count;
             int level = _maxSpeed ? speeds : _session.SpeedIndex;
-            string speedLabel = _maxSpeed ? "最大" : $"{SimulationSession.Speeds[level]:0.###} 世代/フレーム";
+            string speedLabel = _maxSpeed ? "最大" : SpeedLabel(SimulationSession.Speeds[level]);
             ImGui.SetNextItemWidth(280 * s);
             if (ImGui.SliderInt("##speed", ref level, 0, speeds, speedLabel))
             {
@@ -503,6 +503,10 @@ internal sealed class SandboxScreen : IScreen
         else
             _session.ChangeSpeed(delta);
     }
+
+    // 段階は秒/世代で持つが、表示は「1秒に何世代進むか」にそろえる(2秒/世代 → 0.5 世代/秒)
+    private static string SpeedLabel(double secondsPerGeneration) =>
+        $"{1.0 / secondsPerGeneration:0.##} 世代/秒";
 
     private void RecordUndo() => _history.Record(_session.CaptureSnapshot());
 

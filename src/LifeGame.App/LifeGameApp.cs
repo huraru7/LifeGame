@@ -46,7 +46,7 @@ public sealed class LifeGameApp : Game, INavigator
         };
         Content.RootDirectory = "Content";
         IsMouseVisible = true;
-        // 再生速度は「1フレームあたりの世代数」で決めるので、フレームの間隔は固定しない
+        // 再生速度は経過時間から決める(秒/世代)ので、フレームの間隔は固定しない
         IsFixedTimeStep = false;
         Window.AllowUserResizing = true;
         Window.Title = "LifeGame";
