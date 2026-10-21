@@ -1,45 +1,48 @@
+using ImGuiNET;
+using LifeGame.App.Input;
 using LifeGame.App.Rendering;
+using LifeGame.App.Screens;
+using LifeGame.App.Ui;
 using LifeGame.Core;
+using LifeGame.Core.Challenge;
+using LifeGame.Core.Patterns;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
+using NumVector2 = System.Numerics.Vector2;
 
 namespace LifeGame.App;
 
 /// <summary>
-/// アプリ本体。Update で入力を読み盤面を進め、Draw で盤面と HUD を描く。
-/// 演算は <see cref="SimulationSession"/>、表示位置は <see cref="Camera2D"/>、描画は <see cref="IBoardRenderer"/> に任せる。
+/// アプリ本体。ウィンドウ、メニュー、画面の切り替え(<see cref="INavigator"/>)を受け持つ。
+/// 1フレームの流れ: Update で UI のフレームを始め、今の画面が入力・状態・UIを処理する。
+/// Draw で今の画面が盤面を描き、最後に UI を重ねる。
 /// </summary>
-public sealed class LifeGameApp : Game
+public sealed class LifeGameApp : Game, INavigator
 {
-    private const double RandomDensity = 0.3;
-    private const float ArrowPanSpeed = 900f; // 画面ピクセル/秒
-    private const float WheelZoomStep = 1.15f;
-    // 初期の演算方式(SIMD + Parallel)
-    private const int DefaultSimulator = 3;
-
     private readonly GraphicsDeviceManager _graphics;
-    private readonly SimulationSession _session;
-    private readonly Camera2D _camera = new();
+    private readonly InputState _input = new();
+    private ImGuiRenderer _ui = null!;
     private SpriteBatch _spriteBatch = null!;
     private Texture2D _pixel = null!;
-    private Hud _hud = null!;
-    private IBoardRenderer[] _renderers = [];
-    private int _rendererIndex;
-    // 描画方式を切り替えたとき、新しい方式のテクスチャはまだ空なので転送し直す
-    private bool _rendererNeedsUpload = true;
+    private AppServices _services = null!;
+    private SandboxScreen _sandbox = null!;
+    private ChallengeScreen _challenge = null!;
+    private RecordsScreen _records = null!;
+    private IScreen _current = null!;
+    private bool _showHelp;
+    private bool _applyingSize;
+    private Point _windowedSize = new(1280, 800);
 
-    private KeyboardState _previousKeyboard;
-    private MouseState _previousMouse;
-    private Point? _lastPaintedCell;
-
-    public LifeGameApp(int boardWidth, int boardHeight)
+    public LifeGameApp()
     {
         _graphics = new GraphicsDeviceManager(this)
         {
-            PreferredBackBufferWidth = 1280,
-            PreferredBackBufferHeight = 800,
+            PreferredBackBufferWidth = _windowedSize.X,
+            PreferredBackBufferHeight = _windowedSize.Y,
             SynchronizeWithVerticalRetrace = true,
+            // 全画面は画面の解像度を切り替えない(枠のない最大化)ので、切り替えが速く、ぼやけない
+            HardwareModeSwitch = false,
         };
         Content.RootDirectory = "Content";
         IsMouseVisible = true;
@@ -47,15 +50,28 @@ public sealed class LifeGameApp : Game
         IsFixedTimeStep = false;
         Window.AllowUserResizing = true;
         Window.Title = "LifeGame";
-
-        _session = new SimulationSession(boardWidth, boardHeight, SimulatorCatalog.All, DefaultSimulator);
+        Window.ClientSizeChanged += OnClientSizeChanged;
     }
 
-    protected override void Initialize()
+    public void ShowSandbox(Pattern? stamp = null)
     {
-        base.Initialize();
-        _session.Randomize(RandomDensity, Environment.TickCount);
-        _camera.Fit(_session.Width, _session.Height, GraphicsDevice.Viewport);
+        SwitchTo(_sandbox);
+        if (stamp is not null)
+            _sandbox.SetStamp(stamp);
+    }
+
+    public void ShowChallenge(ChallengeRecord? retry = null)
+    {
+        SwitchTo(_challenge);
+        if (retry is not null)
+            _challenge.Retry(retry);
+    }
+
+    public void ShowRecords(int? category = null)
+    {
+        SwitchTo(_records);
+        if (category is int c)
+            _records.SelectCategory(c);
     }
 
     protected override void LoadContent()
@@ -63,144 +79,213 @@ public sealed class LifeGameApp : Game
         _spriteBatch = new SpriteBatch(GraphicsDevice);
         _pixel = new Texture2D(GraphicsDevice, 1, 1);
         _pixel.SetData([Color.White]);
-        _hud = new Hud(Content.Load<SpriteFont>("Hud"), _pixel);
-        _renderers =
-        [
-            new PackedBoardRenderer(GraphicsDevice, Content.Load<Effect>("BoardPacked"), _session.Width, _session.Height),
-            new ColorBoardRenderer(GraphicsDevice, _session.Width, _session.Height),
-        ];
+        _ui = new ImGuiRenderer(this);
+        UiSetup.Configure(_ui);
+
+        var records = new RecordStore(AppPaths.RecordsFile);
+        records.Load();
+        _services = new AppServices
+        {
+            Device = GraphicsDevice,
+            SpriteBatch = _spriteBatch,
+            Pixel = _pixel,
+            ExpandEffect = Content.Load<Effect>("BoardExpand"),
+            DisplayEffect = Content.Load<Effect>("BoardDisplay"),
+            Records = records,
+            View = new ViewSettings(),
+            Navigator = this,
+        };
+        _sandbox = new SandboxScreen(_services);
+        _challenge = new ChallengeScreen(_services);
+        _records = new RecordsScreen(_services);
+        SwitchTo(_sandbox);
+
+        Window.FileDrop += (_, e) =>
+        {
+            if (e.Files.FirstOrDefault() is { } file)
+            {
+                ShowSandbox();
+                _sandbox.LoadPatternFile(file);
+            }
+        };
     }
 
     protected override void UnloadContent()
     {
-        foreach (var renderer in _renderers)
-            renderer.Dispose();
+        _sandbox.Dispose();
+        _challenge.Dispose();
+        _records.Dispose();
+        _ui.Dispose();
         _pixel.Dispose();
         _spriteBatch.Dispose();
     }
 
     protected override void Update(GameTime gameTime)
     {
-        var keyboard = Keyboard.GetState();
-        var mouse = Mouse.GetState();
+        _ui.BeginFrame(gameTime);
+        var io = ImGui.GetIO();
+        _input.Update(io.WantCaptureMouse, io.WantCaptureKeyboard);
 
-        if (keyboard.IsKeyDown(Keys.Escape))
-            Exit();
+        HandleGlobalKeys();
+        DrawMainMenu();
+        _current.Update(gameTime, _input);
+        DrawHelp();
 
-        HandleKeys(keyboard, (float)gameTime.ElapsedGameTime.TotalSeconds);
-        if (IsActive)
-            HandleMouse(mouse);
-
-        _session.Tick();
-
-        _previousKeyboard = keyboard;
-        _previousMouse = mouse;
         base.Update(gameTime);
     }
 
     protected override void Draw(GameTime gameTime)
     {
-        _hud.CountFrame(gameTime);
-        var renderer = _renderers[_rendererIndex];
-
-        // 盤面が変わったときだけ GPU へ転送する
-        if (_session.BoardChanged || _rendererNeedsUpload)
-        {
-            renderer.Upload(_session.GetPackedBoard());
-            _rendererNeedsUpload = false;
-        }
-
-        GraphicsDevice.Clear(new Color(8, 9, 12));
-        renderer.Draw(_spriteBatch, _camera.BoardToScreen, GraphicsDevice.Viewport);
-        _hud.Draw(_spriteBatch, _session, renderer);
-
+        GraphicsDevice.Clear(BoardColors.Outside);
+        _current.Draw(gameTime);
+        _ui.Render();
         base.Draw(gameTime);
     }
 
-    private void HandleKeys(KeyboardState keyboard, float deltaSeconds)
+    private void SwitchTo(IScreen screen)
     {
-        if (Pressed(keyboard, Keys.Space))
-            _session.Paused = !_session.Paused;
-        if (Pressed(keyboard, Keys.N) && _session.Paused)
-            _session.Advance(1);
-        if (Pressed(keyboard, Keys.OemPlus) || Pressed(keyboard, Keys.Add))
-            _session.ChangeSpeed(+1);
-        if (Pressed(keyboard, Keys.OemMinus) || Pressed(keyboard, Keys.Subtract))
-            _session.ChangeSpeed(-1);
-        if (Pressed(keyboard, Keys.R))
-            _session.Randomize(RandomDensity, Environment.TickCount);
-        if (Pressed(keyboard, Keys.C))
-            _session.Clear();
-        if (Pressed(keyboard, Keys.F))
-            _camera.Fit(_session.Width, _session.Height, GraphicsDevice.Viewport);
-        if (Pressed(keyboard, Keys.H))
-            _hud.Visible = !_hud.Visible;
-        if (Pressed(keyboard, Keys.Tab))
-        {
-            _rendererIndex = (_rendererIndex + 1) % _renderers.Length;
-            _rendererNeedsUpload = true;
-        }
-
-        for (int i = 0; i < _session.SimulatorCount && i < 9; i++)
-        {
-            if (Pressed(keyboard, Keys.D1 + i) || Pressed(keyboard, Keys.NumPad1 + i))
-                _session.SwitchSimulator(i);
-        }
-
-        var pan = Vector2.Zero;
-        if (keyboard.IsKeyDown(Keys.Left)) pan.X += 1;
-        if (keyboard.IsKeyDown(Keys.Right)) pan.X -= 1;
-        if (keyboard.IsKeyDown(Keys.Up)) pan.Y += 1;
-        if (keyboard.IsKeyDown(Keys.Down)) pan.Y -= 1;
-        if (pan != Vector2.Zero)
-            _camera.Pan(pan * ArrowPanSpeed * deltaSeconds);
+        _current = screen;
+        screen.OnEnter();
     }
 
-    private void HandleMouse(MouseState mouse)
+    private void HandleGlobalKeys()
     {
-        var position = mouse.Position.ToVector2();
-        bool insideWindow = GraphicsDevice.Viewport.Bounds.Contains(mouse.Position);
+        if (_input.Pressed(Keys.F1)) ShowSandbox();
+        if (_input.Pressed(Keys.F2)) ShowChallenge();
+        if (_input.Pressed(Keys.F3)) ShowRecords();
+        if (_input.Pressed(Keys.F11)) ToggleFullScreen();
+    }
 
-        int wheel = mouse.ScrollWheelValue - _previousMouse.ScrollWheelValue;
-        if (wheel != 0 && insideWindow)
-            _camera.ZoomAt(position, wheel > 0 ? WheelZoomStep : 1f / WheelZoomStep);
-
-        if (mouse.MiddleButton == ButtonState.Pressed && _previousMouse.MiddleButton == ButtonState.Pressed)
-            _camera.Pan(position - _previousMouse.Position.ToVector2());
-
-        bool painting = mouse.LeftButton == ButtonState.Pressed;
-        bool erasing = mouse.RightButton == ButtonState.Pressed;
-        if (!(painting || erasing) || !insideWindow)
-        {
-            _lastPaintedCell = null;
+    private void DrawMainMenu()
+    {
+        if (!ImGui.BeginMainMenuBar())
             return;
-        }
 
-        Vector2 board = _camera.ScreenToBoard(position);
-        var cell = new Point((int)MathF.Floor(board.X), (int)MathF.Floor(board.Y));
-        // マウスを速く動かしても線が途切れないよう、前のフレームの位置から線で結ぶ
-        PaintLine(_lastPaintedCell ?? cell, cell, painting);
-        _lastPaintedCell = cell;
-    }
-
-    // ブレゼンハムの線分アルゴリズムで、from から to までのセルを塗る
-    private void PaintLine(Point from, Point to, bool alive)
-    {
-        int dx = Math.Abs(to.X - from.X), sx = from.X < to.X ? 1 : -1;
-        int dy = -Math.Abs(to.Y - from.Y), sy = from.Y < to.Y ? 1 : -1;
-        int error = dx + dy;
-        int x = from.X, y = from.Y;
-        while (true)
+        if (ImGui.BeginMenu("モード"))
         {
-            _session.SetCell(x, y, alive);
-            if (x == to.X && y == to.Y)
-                break;
-            int doubled = 2 * error;
-            if (doubled >= dy) { error += dy; x += sx; }
-            if (doubled <= dx) { error += dx; y += sy; }
+            if (ImGui.MenuItem("サンドボックス", "F1", _current == _sandbox)) ShowSandbox();
+            if (ImGui.MenuItem("記録チャレンジ", "F2", _current == _challenge)) ShowChallenge();
+            if (ImGui.MenuItem("記録一覧", "F3", _current == _records)) ShowRecords();
+            ImGui.EndMenu();
         }
+
+        if (ImGui.BeginMenu("表示"))
+        {
+            var view = _services.View;
+            if (ImGui.MenuItem("観察パネル", "", view.ShowObservation)) view.ShowObservation = !view.ShowObservation;
+            if (ImGui.MenuItem("全画面", "F11", _graphics.IsFullScreen)) ToggleFullScreen();
+
+            ImGui.Separator();
+            ImGui.TextDisabled("描画方式");
+            for (int i = 0; i < ViewSettings.RendererNames.Length; i++)
+            {
+                if (ImGui.MenuItem(ViewSettings.RendererNames[i], "", view.RendererIndex == i))
+                    view.RendererIndex = i;
+            }
+
+            if (_current.Session is { } session)
+            {
+                ImGui.Separator();
+                ImGui.TextDisabled("演算方式");
+                for (int i = 0; i < SimulatorCatalog.Names.Count; i++)
+                {
+                    if (ImGui.MenuItem(SimulatorCatalog.Names[i], "", session.SimulatorIndex == i))
+                        session.SwitchSimulator(i);
+                }
+            }
+            ImGui.EndMenu();
+        }
+
+        if (ImGui.BeginMenu("ヘルプ"))
+        {
+            if (ImGui.MenuItem("操作方法")) _showHelp = true;
+            ImGui.EndMenu();
+        }
+
+        if (UiSetup.FontWarning is { } warning)
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled(warning);
+        }
+        ImGui.EndMainMenuBar();
     }
 
-    private bool Pressed(KeyboardState keyboard, Keys key) =>
-        keyboard.IsKeyDown(key) && _previousKeyboard.IsKeyUp(key);
+    private void DrawHelp()
+    {
+        if (!_showHelp)
+            return;
+        float s = UiSetup.Scale;
+        ImGui.SetNextWindowSize(new NumVector2(520 * s, 0), ImGuiCond.Appearing);
+        if (ImGui.Begin("操作方法", ref _showHelp, ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            (string Key, string Action)[] rows =
+            [
+                ("ホイール", "拡大・縮小(マウスの位置が中心)"),
+                ("中ボタンでドラッグ / 矢印キー", "表示位置を動かす"),
+                ("左クリック・ドラッグ", "今の道具で描く・消す・スタンプを置く"),
+                ("右クリック・ドラッグ", "消す"),
+                ("Space / N", "再生・一時停止 / 1世代進める"),
+                ("+ / -", "速度を上げる・下げる"),
+                ("1 / 2 / 3", "道具: 描く / 消す / スタンプ"),
+                ("Q / E / X", "スタンプを左に回す / 右に回す / 反転"),
+                ("Ctrl+Z / Ctrl+Y", "元に戻す / やり直す"),
+                ("R / Delete / Home", "ランダム / 全消去 / 全体を見る"),
+                ("F1 / F2 / F3", "サンドボックス / 記録チャレンジ / 記録一覧"),
+                ("F11", "全画面"),
+                (".rle をドロップ", "パターンを読み込んでスタンプにする"),
+            ];
+            if (ImGui.BeginTable("help", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+            {
+                foreach (var (key, action) in rows)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.TextDisabled(key);
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(action);
+                }
+                ImGui.EndTable();
+            }
+        }
+        ImGui.End();
+    }
+
+    private void ToggleFullScreen()
+    {
+        _applyingSize = true;
+        if (_graphics.IsFullScreen)
+        {
+            _graphics.IsFullScreen = false;
+            _graphics.PreferredBackBufferWidth = _windowedSize.X;
+            _graphics.PreferredBackBufferHeight = _windowedSize.Y;
+        }
+        else
+        {
+            _windowedSize = new Point(_graphics.PreferredBackBufferWidth, _graphics.PreferredBackBufferHeight);
+            var mode = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode;
+            _graphics.PreferredBackBufferWidth = mode.Width;
+            _graphics.PreferredBackBufferHeight = mode.Height;
+            _graphics.IsFullScreen = true;
+        }
+        _graphics.ApplyChanges();
+        _applyingSize = false;
+    }
+
+    // ウィンドウの大きさを変えたら、描画の解像度も合わせる(合わせないと引き伸ばされてぼやける)
+    private void OnClientSizeChanged(object? sender, EventArgs e)
+    {
+        if (_applyingSize || _graphics.IsFullScreen)
+            return;
+        var bounds = Window.ClientBounds;
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+            return;
+        if (bounds.Width == _graphics.PreferredBackBufferWidth && bounds.Height == _graphics.PreferredBackBufferHeight)
+            return;
+
+        _applyingSize = true;
+        _graphics.PreferredBackBufferWidth = bounds.Width;
+        _graphics.PreferredBackBufferHeight = bounds.Height;
+        _graphics.ApplyChanges();
+        _applyingSize = false;
+    }
 }

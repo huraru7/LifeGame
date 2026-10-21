@@ -24,7 +24,7 @@ internal sealed class ColorBoardRenderer : IBoardRenderer
         _pixels = new Color[width * height];
     }
 
-    public string Name => "Color (CPU unpack)";
+    public string Name => "比較用(CPUで色に展開)";
 
     public double LastUploadMilliseconds { get; private set; }
 
