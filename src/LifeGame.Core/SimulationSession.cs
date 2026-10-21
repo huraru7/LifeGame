@@ -1,9 +1,13 @@
 using System.Diagnostics;
+using LifeGame.Core.Analysis;
+using LifeGame.Core.Challenge;
+using LifeGame.Core.Editing;
+using LifeGame.Core.Patterns;
 
 namespace LifeGame.Core;
 
 /// <summary>
-/// 再生中の盤面を管理する。演算方式の切り替え、再生速度、世代数、1世代の演算時間の計測を担う。
+/// 再生中の盤面を管理する。演算方式の切り替え、再生速度、世代数、1世代の演算時間、人口の統計を担う。
 /// 描画側へは、詰めた形式の盤面(<see cref="GetPackedBoard"/>)だけを渡す。
 /// </summary>
 public sealed class SimulationSession
@@ -13,9 +17,11 @@ public sealed class SimulationSession
 
     private readonly IReadOnlyList<Func<int, int, ILifeSimulator>> _factories;
     private readonly ulong[] _packed;
+    private readonly PopulationStats _stats = new(ChallengeRules.MaxPopulationPeriod, ChallengeRules.ConfirmGenerations);
     private bool _packedStale = true;
+    // 編集のたびに人口を数え直すと重いので、次に統計が必要になったときにまとめて数え直す
+    private bool _statsStale = true;
     private double _stepAccumulator;
-    private int _speedIndex = 3;
 
     public SimulationSession(int width, int height, IReadOnlyList<Func<int, int, ILifeSimulator>> factories, int initialSimulator)
     {
@@ -27,6 +33,8 @@ public sealed class SimulationSession
         SimulatorIndex = initialSimulator;
         Current = factories[initialSimulator](width, height);
     }
+
+    public static IReadOnlyList<double> Speeds => SpeedLevels;
 
     public int Width { get; }
 
@@ -42,13 +50,26 @@ public sealed class SimulationSession
 
     public bool Paused { get; set; }
 
-    public double GenerationsPerFrame => SpeedLevels[_speedIndex];
+    /// <summary>SpeedLevels の何番目の速さで再生するか。</summary>
+    public int SpeedIndex { get; set; } = 3;
+
+    public double GenerationsPerFrame => SpeedLevels[SpeedIndex];
 
     /// <summary>1世代の演算時間(ミリ秒)の指数移動平均。</summary>
     public double AverageStepMilliseconds { get; private set; }
 
     /// <summary>前回 <see cref="GetPackedBoard"/> を呼んでから盤面が変わったか。</summary>
     public bool BoardChanged { get; private set; } = true;
+
+    /// <summary>人口の統計。最後に編集されてからの推移を持つ。</summary>
+    public PopulationStats Stats
+    {
+        get
+        {
+            RefreshStats();
+            return _stats;
+        }
+    }
 
     public void SwitchSimulator(int index)
     {
@@ -66,20 +87,20 @@ public sealed class SimulationSession
 
     public void ChangeSpeed(int delta)
     {
-        _speedIndex = Math.Clamp(_speedIndex + delta, 0, SpeedLevels.Length - 1);
+        SpeedIndex = Math.Clamp(SpeedIndex + delta, 0, SpeedLevels.Length - 1);
     }
 
     public void Randomize(double density, int seed)
     {
         Array.Clear(_packed);
         PackedBoard.Randomize(_packed, Width, Height, density, seed);
-        LoadPacked();
+        LoadPacked(generation: 0);
     }
 
     public void Clear()
     {
         Array.Clear(_packed);
-        LoadPacked();
+        LoadPacked(generation: 0);
     }
 
     public void SetCell(int x, int y, bool alive)
@@ -87,7 +108,31 @@ public sealed class SimulationSession
         if (x < 0 || y < 0 || x >= Width || y >= Height)
             return;
         Current.SetCell(x, y, alive);
-        MarkChanged();
+        MarkEdited();
+    }
+
+    /// <summary>パターンの左上を (x, y) に合わせて置く。盤面の端からはみ出た分は反対側へ回り込む(トーラス)。</summary>
+    public void Stamp(Pattern pattern, int x, int y, bool alive = true)
+    {
+        foreach (var cell in pattern.Cells)
+        {
+            int cx = (int)(((long)x + cell.X) % Width + Width) % Width;
+            int cy = (int)(((long)y + cell.Y) % Height + Height) % Height;
+            Current.SetCell(cx, cy, alive);
+        }
+        MarkEdited();
+    }
+
+    public BoardSnapshot CaptureSnapshot()
+    {
+        RefreshPacked();
+        return new BoardSnapshot((ulong[])_packed.Clone(), Generation);
+    }
+
+    public void RestoreSnapshot(BoardSnapshot snapshot)
+    {
+        snapshot.Cells.CopyTo(_packed, 0);
+        LoadPacked(snapshot.Generation);
     }
 
     /// <summary>再生速度に応じて、このフレームの分だけ世代を進める。一時停止中は何もしない。</summary>
@@ -102,8 +147,25 @@ public sealed class SimulationSession
         Advance(steps);
     }
 
+    /// <summary>budget の時間を使い切るまで世代を進め、進めた世代数を返す。</summary>
+    public int AdvanceFor(TimeSpan budget)
+    {
+        long start = Stopwatch.GetTimestamp();
+        int steps = 0;
+        while (Stopwatch.GetElapsedTime(start) < budget)
+        {
+            Advance(1);
+            steps++;
+        }
+        return steps;
+    }
+
     public void Advance(int steps)
     {
+        if (steps <= 0)
+            return;
+
+        RefreshStats();
         for (int i = 0; i < steps; i++)
         {
             long start = Stopwatch.GetTimestamp();
@@ -111,9 +173,10 @@ public sealed class SimulationSession
             double elapsed = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             AverageStepMilliseconds = AverageStepMilliseconds == 0 ? elapsed : AverageStepMilliseconds * 0.9 + elapsed * 0.1;
             Generation++;
+            _stats.Record(Generation, Current.CountPopulation());
         }
-        if (steps > 0)
-            MarkChanged();
+        _packedStale = true;
+        BoardChanged = true;
     }
 
     /// <summary>描画用に、現在の盤面を詰めた形式で返す。必要なときだけ演算方式から書き出す。</summary>
@@ -124,19 +187,21 @@ public sealed class SimulationSession
         return _packed;
     }
 
-    private void LoadPacked()
+    private void LoadPacked(long generation)
     {
         Current.Load(_packed);
-        Generation = 0;
+        Generation = generation;
         _stepAccumulator = 0;
         _packedStale = false;
         BoardChanged = true;
+        _statsStale = true;
     }
 
-    private void MarkChanged()
+    private void MarkEdited()
     {
         _packedStale = true;
         BoardChanged = true;
+        _statsStale = true;
     }
 
     private void RefreshPacked()
@@ -145,5 +210,13 @@ public sealed class SimulationSession
             return;
         Current.CopyTo(_packed);
         _packedStale = false;
+    }
+
+    private void RefreshStats()
+    {
+        if (!_statsStale)
+            return;
+        _statsStale = false;
+        _stats.Reset(Generation, Current.CountPopulation());
     }
 }

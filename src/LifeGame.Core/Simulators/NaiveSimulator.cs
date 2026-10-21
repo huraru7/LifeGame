@@ -58,6 +58,18 @@ public sealed class NaiveSimulator : ILifeSimulator
         _current[(y + 1) * _stride + x + 1] = alive ? (byte)1 : (byte)0;
     }
 
+    public long CountPopulation()
+    {
+        long population = 0;
+        for (int y = 1; y <= Height; y++)
+        {
+            int row = y * _stride;
+            for (int x = 1; x <= Width; x++)
+                population += _current[row + x];
+        }
+        return population;
+    }
+
     public void Step()
     {
         FillGhosts();

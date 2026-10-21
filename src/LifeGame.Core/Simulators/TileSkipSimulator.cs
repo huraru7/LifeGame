@@ -56,6 +56,8 @@ public sealed class TileSkipSimulator : ILifeSimulator
         ActivateAround(x / PackedBoard.CellsPerWord, y / TileRows);
     }
 
+    public long CountPopulation() => _grid.CountPopulation(_current);
+
     public void Step()
     {
         _grid.FillGhosts(_current);

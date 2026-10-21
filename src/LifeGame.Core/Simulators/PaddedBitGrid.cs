@@ -57,6 +57,15 @@ internal sealed class PaddedBitGrid
         }
     }
 
+    /// <summary>ゴーストを除いた内側だけの人口を数える。</summary>
+    public long CountPopulation(ulong[] buffer)
+    {
+        long population = 0;
+        for (int y = 0; y < Height; y++)
+            population += PackedBoard.CountPopulation(buffer.AsSpan(IndexOf(y, 0), WordsPerRow));
+        return population;
+    }
+
     public void SetCell(ulong[] buffer, int x, int y, bool alive)
     {
         ref ulong word = ref buffer[IndexOf(y, x / PackedBoard.CellsPerWord)];

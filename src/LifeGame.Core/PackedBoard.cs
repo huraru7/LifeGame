@@ -35,6 +35,15 @@ public static class PackedBoard
         word = alive ? word | mask : word & ~mask;
     }
 
+    /// <summary>立っているビットの数(生存セルの数)を数える。</summary>
+    public static long CountPopulation(ReadOnlySpan<ulong> words)
+    {
+        long population = 0;
+        foreach (ulong word in words)
+            population += System.Numerics.BitOperations.PopCount(word);
+        return population;
+    }
+
     /// <summary>指定した範囲を、生存率 density のランダムな配置で埋める(範囲外は変更しない)。</summary>
     public static void Randomize(Span<ulong> packed, int width, int height, double density, int seed,
         int left = 0, int top = 0, int regionWidth = int.MaxValue, int regionHeight = int.MaxValue)

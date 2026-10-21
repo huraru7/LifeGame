@@ -20,6 +20,9 @@ public interface ILifeSimulator
 
     void SetCell(int x, int y, bool alive);
 
+    /// <summary>生存セルの数(人口)を数える。</summary>
+    long CountPopulation();
+
     /// <summary>1世代進める。</summary>
     void Step();
 }

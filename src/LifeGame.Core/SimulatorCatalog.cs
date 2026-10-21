@@ -13,4 +13,11 @@ public static class SimulatorCatalog
         (w, h) => new SimdSimulator(w, h, parallel: true),
         (w, h) => new TileSkipSimulator(w, h),
     ];
+
+    /// <summary><see cref="All"/> と同じ順の名前(メニューに出す。盤面を作らずに名前だけ欲しいとき用)。</summary>
+    public static IReadOnlyList<string> Names { get; } =
+        ["Naive", "Bitboard", "SIMD", "SIMD + Parallel", "Tile skip + Parallel"];
+
+    /// <summary>アプリで使う方式(SIMD + Parallel)。</summary>
+    public const int DefaultIndex = 3;
 }

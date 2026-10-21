@@ -43,6 +43,8 @@ public sealed class SimdSimulator : ILifeSimulator
 
     public void SetCell(int x, int y, bool alive) => _grid.SetCell(_current, x, y, alive);
 
+    public long CountPopulation() => _grid.CountPopulation(_current);
+
     public void Step()
     {
         _grid.FillGhosts(_current);

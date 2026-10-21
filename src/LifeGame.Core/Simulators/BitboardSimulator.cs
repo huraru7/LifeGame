@@ -31,6 +31,8 @@ public sealed class BitboardSimulator : ILifeSimulator
 
     public void SetCell(int x, int y, bool alive) => PackedBoard.SetCell(_current, Width, x, y, alive);
 
+    public long CountPopulation() => PackedBoard.CountPopulation(_current);
+
     public void Step()
     {
         ulong[] cur = _current;

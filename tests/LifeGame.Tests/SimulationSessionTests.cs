@@ -31,6 +31,24 @@ public class SimulationSessionTests
     }
 
     [Fact]
+    public void CatalogNames_MatchSimulatorNames()
+    {
+        var names = SimulatorCatalog.All.Select(create => create(64, 64).Name);
+        Assert.Equal(SimulatorCatalog.Names, names);
+    }
+
+    [Fact]
+    public void Stamp_WrapsAroundBoardEdges()
+    {
+        var session = new SimulationSession(64, 64, SimulatorCatalog.All, initialSimulator: 1);
+        session.Stamp(LifeGame.Core.Patterns.PatternLibrary.Find("ブロック").Pattern, 63, 63);
+        var board = session.GetPackedBoard();
+        Assert.True(PackedBoard.GetCell(board, 64, 63, 63));
+        Assert.True(PackedBoard.GetCell(board, 64, 0, 0));
+        Assert.Equal(4, session.Stats.Population);
+    }
+
+    [Fact]
     public void Tick_AdvancesByAccumulatedSpeed()
     {
         var session = new SimulationSession(64, 64, SimulatorCatalog.All, initialSimulator: 1);

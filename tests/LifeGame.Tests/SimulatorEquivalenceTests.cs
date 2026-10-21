@@ -106,5 +106,6 @@ public class SimulatorEquivalenceTests
         actual.CopyTo(actualBoard);
         Assert.True(expectedBoard.AsSpan().SequenceEqual(actualBoard),
             $"{actual.Name}: {generation}世代目で素朴な実装と一致しません。");
+        Assert.Equal(expected.CountPopulation(), actual.CountPopulation());
     }
 }
