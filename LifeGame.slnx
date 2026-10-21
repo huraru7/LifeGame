@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/bench/">
+    <Project Path="bench/LifeGame.Benchmarks/LifeGame.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/LifeGame.App/LifeGame.App.csproj" />
+    <Project Path="src/LifeGame.Core/LifeGame.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LifeGame.Tests/LifeGame.Tests.csproj" />
+  </Folder>
+</Solution>
