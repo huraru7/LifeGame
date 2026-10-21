@@ -6,7 +6,6 @@ namespace LifeGame.App.Board;
 /// <summary>
 /// 盤面の拡大率と表示位置。盤面座標は1セル = 1単位。
 /// 拡大・縮小は目標の倍率へ滑らかに近づける(マウスの下の位置は動かさない)。
-/// 盤面は切れ目なく繰り返して描くので、表示位置はどこまでも動かせる。
 /// </summary>
 internal sealed class Camera2D
 {
@@ -14,8 +13,6 @@ internal sealed class Camera2D
     private const float MaxZoom = 96f;
     // 大きいほど目標の倍率に早く追いつく
     private const float ZoomSharpness = 16f;
-    // 表示位置がこれだけ盤面の枚数ぶん離れたら、盤面1枚ぶんずつ戻す(浮動小数点の精度を保つため)
-    private const int WrapDistanceInBoards = 8;
 
     private float _targetZoom = 1f;
     private Vector2 _zoomAnchor;
@@ -23,7 +20,7 @@ internal sealed class Camera2D
     /// <summary>1セルあたりの画面ピクセル数。</summary>
     public float Zoom { get; private set; } = 1f;
 
-    /// <summary>縮小できる限界。盤面の同じ場所が画面に2回映らない倍率にする。</summary>
+    /// <summary>縮小できる限界(表示する範囲が画面に収まる程度)。</summary>
     public float MinZoom { get; private set; } = AbsoluteMinZoom;
 
     /// <summary>画面の左上に映る盤面座標。</summary>
@@ -62,19 +59,16 @@ internal sealed class Camera2D
         Position -= screenDelta / Zoom;
     }
 
-    public void Update(float deltaSeconds, int boardWidth, int boardHeight)
+    public void Update(float deltaSeconds)
     {
         if (MathF.Abs(_targetZoom - Zoom) <= Zoom * 1e-4f)
         {
             SetZoomAround(_zoomAnchor, _targetZoom);
+            return;
         }
-        else
-        {
-            // 倍率の比で近づけるので、拡大でも縮小でも同じ速さに感じる
-            float t = 1f - MathF.Exp(-deltaSeconds * ZoomSharpness);
-            SetZoomAround(_zoomAnchor, Zoom * MathF.Pow(_targetZoom / Zoom, t));
-        }
-        WrapFarPosition(boardWidth, boardHeight);
+        // 倍率の比で近づけるので、拡大でも縮小でも同じ速さに感じる
+        float t = 1f - MathF.Exp(-deltaSeconds * ZoomSharpness);
+        SetZoomAround(_zoomAnchor, Zoom * MathF.Pow(_targetZoom / Zoom, t));
     }
 
     /// <summary>
@@ -95,18 +89,6 @@ internal sealed class Camera2D
         Vector2 anchor = ScreenToBoard(screen);
         Zoom = zoom;
         Position = anchor - screen / Zoom;
-    }
-
-    // 盤面1枚ぶんずらしても見た目は同じ(繰り返して描いている)なので、遠くへ行きすぎたら戻す
-    private void WrapFarPosition(int boardWidth, int boardHeight)
-    {
-        float x = Position.X;
-        float y = Position.Y;
-        if (MathF.Abs(x) > boardWidth * WrapDistanceInBoards)
-            x -= MathF.Floor(x / boardWidth) * boardWidth;
-        if (MathF.Abs(y) > boardHeight * WrapDistanceInBoards)
-            y -= MathF.Floor(y / boardHeight) * boardHeight;
-        Position = new Vector2(x, y);
     }
 }
 

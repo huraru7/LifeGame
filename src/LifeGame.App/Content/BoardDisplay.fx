@@ -8,7 +8,7 @@
 #endif
 
 // 1セル1ピクセルの画像(ミップマップつき)から盤面を描く。
-// テクスチャ座標は 0〜1 の外にもなり、サンプラーの Wrap で盤面が繰り返される(どこまでも続いて見える)。
+// 遊ぶ範囲(FieldRect)の外は、計算は続いているが薄い色で描く。
 // 拡大時: セルを隙間つきの四角として描き、縁は1ピクセル幅で滑らかにする。
 // 縮小時: 画面の1ピクセルが覆う範囲の生存密度を、ミップマップから読んで明るさにする(砂嵐やチラつきが出ない)。
 
@@ -17,6 +17,9 @@ float2 BoardSize;
 float4 AliveColor;
 float4 DeadColor;
 float4 GapColor;
+float4 OutsideAliveColor;
+float4 OutsideDeadColor;
+float4 FieldRect;    // 遊ぶ範囲 (左, 上, 右, 下) のセル座標
 
 Texture2D SpriteTexture;
 sampler2D CellSampler = sampler_state
@@ -25,8 +28,8 @@ sampler2D CellSampler = sampler_state
 	MinFilter = Linear;
 	MagFilter = Point;
 	MipFilter = Linear;
-	AddressU = Wrap;
-	AddressV = Wrap;
+	AddressU = Clamp;
+	AddressV = Clamp;
 };
 
 struct VertexShaderInput
@@ -67,7 +70,12 @@ float4 MainPS(VertexShaderOutput input) : COLOR
 	float density = tex2Dlod(CellSampler, float4(uv, 0.0, log2(cellsPerPixel))).r;
 	// 縮小時は、まばらな領域も見えるように密度の低いところを持ち上げる
 	float brightness = cellsPerPixel > 1.0 ? saturate(sqrt(density) * 1.15) : density;
-	float4 cellColor = lerp(DeadColor, AliveColor, brightness);
+	// 遊ぶ範囲の中なら1、外なら0(step(a, x) は x >= a のとき1)
+	float2 withinField = step(FieldRect.xy, cellPos) * step(cellPos, FieldRect.zw);
+	float inField = withinField.x * withinField.y;
+	float4 alive = lerp(OutsideAliveColor, AliveColor, inField);
+	float4 dead = lerp(OutsideDeadColor, DeadColor, inField);
+	float4 cellColor = lerp(dead, alive, brightness);
 
 	// セルが4ピクセルを超えたあたりから、隙間を少しずつ見せる
 	float tileAmount = saturate((pixelsPerCell - 4.0) / 4.0);

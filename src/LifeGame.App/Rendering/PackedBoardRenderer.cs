@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using LifeGame.Core;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -15,12 +16,11 @@ internal sealed class PackedBoardRenderer : IBoardRenderer
 
     private static readonly SamplerState CellSampler = new()
     {
-        // 拡大は点で(セルの縁をぼかさない)、縮小はミップマップの段の間も滑らかに。
-        // 盤面の外は繰り返して読む(ミップマップも端が反対側とつながる)
+        // 拡大は点で(セルの縁をぼかさない)、縮小はミップマップの段の間も滑らかに
         Filter = TextureFilter.MinLinearMagPointMipLinear,
-        AddressU = TextureAddressMode.Wrap,
-        AddressV = TextureAddressMode.Wrap,
-        AddressW = TextureAddressMode.Wrap,
+        AddressU = TextureAddressMode.Clamp,
+        AddressV = TextureAddressMode.Clamp,
+        AddressW = TextureAddressMode.Clamp,
     };
 
     private readonly GraphicsDevice _device;
@@ -32,10 +32,13 @@ internal sealed class PackedBoardRenderer : IBoardRenderer
     private readonly uint[] _staging;
     private readonly int _width;
     private readonly int _height;
+    private readonly CellRegion _field;
 
-    public PackedBoardRenderer(GraphicsDevice device, Effect expandEffect, Effect displayEffect, int width, int height)
+    /// <summary>field は遊ぶ範囲。その外のセルは薄く描く。</summary>
+    public PackedBoardRenderer(GraphicsDevice device, Effect expandEffect, Effect displayEffect, int width, int height, CellRegion field)
     {
         _device = device;
+        _field = field;
         _spriteBatch = new SpriteBatch(device);
         _expandEffect = expandEffect;
         _displayEffect = displayEffect;
@@ -61,7 +64,7 @@ internal sealed class PackedBoardRenderer : IBoardRenderer
         LastUploadMilliseconds = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
     }
 
-    public void Draw(SpriteBatch spriteBatch, Matrix boardToScreen, Viewport viewport, Rectangle visibleArea)
+    public void Draw(SpriteBatch spriteBatch, Matrix boardToScreen, Viewport viewport)
     {
         var projection = Matrix.CreateOrthographicOffCenter(0, viewport.Width, viewport.Height, 0, 0, -1);
         _displayEffect.Parameters["MatrixTransform"].SetValue(boardToScreen * projection);
@@ -69,11 +72,12 @@ internal sealed class PackedBoardRenderer : IBoardRenderer
         _displayEffect.Parameters["AliveColor"].SetValue(BoardColors.Alive.ToVector4());
         _displayEffect.Parameters["DeadColor"].SetValue(BoardColors.Dead.ToVector4());
         _displayEffect.Parameters["GapColor"].SetValue(BoardColors.Gap.ToVector4());
+        _displayEffect.Parameters["OutsideAliveColor"].SetValue(BoardColors.OutsideAlive.ToVector4());
+        _displayEffect.Parameters["OutsideDeadColor"].SetValue(BoardColors.OutsideDead.ToVector4());
+        _displayEffect.Parameters["FieldRect"].SetValue(new Vector4(_field.Left, _field.Top, _field.Right, _field.Bottom));
 
-        // 描く先も読む元も同じ盤面座標の範囲にする。範囲が盤面の外にはみ出すと、テクスチャ座標が 0〜1 の外になり、
-        // サンプラーの Wrap で盤面が繰り返される
         spriteBatch.Begin(blendState: BlendState.Opaque, samplerState: CellSampler, effect: _displayEffect);
-        spriteBatch.Draw(_cells, visibleArea, visibleArea, Color.White);
+        spriteBatch.Draw(_cells, new Rectangle(0, 0, _width, _height), Color.White);
         spriteBatch.End();
     }
 

@@ -20,8 +20,9 @@ namespace LifeGame.App.Screens;
 /// </summary>
 internal sealed class SandboxScreen : IScreen
 {
-    // 盤面は繰り返して描くので、引いて見ても同じ場所が2回映らないよう、画面より十分に広くする
+    // 表示する範囲。中央の 2048² が遊ぶ範囲で、その周り1024マスは計算の続く外側を薄く見せる
     private const int BoardSize = 4096;
+    private static readonly CellRegion Field = new(1024, 1024, 2048, 2048);
     private const double RandomDensity = 0.3;
     private const string SavedCategory = "保存した配置";
     private static readonly TimeSpan MaxSpeedBudget = TimeSpan.FromMilliseconds(10);
@@ -65,7 +66,7 @@ internal sealed class SandboxScreen : IScreen
     {
         _services = services;
         _session = new SimulationSession(BoardSize, BoardSize, SimulatorCatalog.All, SimulatorCatalog.DefaultIndex);
-        _view = new BoardView(services, BoardSize, BoardSize);
+        _view = new BoardView(services, BoardSize, BoardSize, Field);
         _overlay = new BoardOverlay(services);
         RefreshSavedFiles();
     }
@@ -89,9 +90,9 @@ internal sealed class SandboxScreen : IScreen
     /// <summary>パターンをスタンプとして持つ(道具もスタンプに切り替える)。</summary>
     public void SetStamp(Pattern pattern)
     {
-        if (pattern.Width > BoardSize || pattern.Height > BoardSize)
+        if (pattern.Width > Field.Width || pattern.Height > Field.Height)
         {
-            ShowMessage($"「{pattern.Name}」は {pattern.Width}×{pattern.Height} で、盤面({BoardSize}×{BoardSize})より大きいため置けません。");
+            ShowMessage($"「{pattern.Name}」は {pattern.Width}×{pattern.Height} で、遊ぶ範囲({Field.Width}×{Field.Height})より大きいため置けません。");
             return;
         }
         _stamp = pattern;
@@ -143,18 +144,20 @@ internal sealed class SandboxScreen : IScreen
     public void Draw(GameTime gameTime)
     {
         _view.Draw(_session);
-        if (!_hoverVisible || _tool == Tool.Move)
-            return;
 
         _overlay.Begin(_view.Camera);
-        if (_tool == Tool.Stamp)
+        _overlay.DrawRectangleOutline(_view.Camera, new Rectangle(Field.Left, Field.Top, Field.Width, Field.Height), BoardColors.FieldBorder * 0.8f, 2f);
+        if (_hoverVisible && _tool != Tool.Move && _view.InField(_hoverCell))
         {
-            _overlay.DrawPattern(_view.Camera, _stamp, StampOrigin(_hoverCell), BoardColors.Accent * 0.6f);
-        }
-        else if (_view.Camera.Zoom >= 6f)
-        {
-            var color = _tool == Tool.Draw ? BoardColors.Highlight : BoardColors.Accent;
-            _overlay.DrawRectangleOutline(_view.Camera, new Rectangle(_hoverCell.X, _hoverCell.Y, 1, 1), color * 0.8f, 1.5f);
+            if (_tool == Tool.Stamp)
+            {
+                _overlay.DrawPattern(_view.Camera, _stamp, StampOrigin(_hoverCell), BoardColors.Accent * 0.6f);
+            }
+            else if (_view.Camera.Zoom >= 6f)
+            {
+                var color = _tool == Tool.Draw ? BoardColors.Highlight : BoardColors.Accent;
+                _overlay.DrawRectangleOutline(_view.Camera, new Rectangle(_hoverCell.X, _hoverCell.Y, 1, 1), color * 0.8f, 1.5f);
+            }
         }
         _overlay.End();
     }
@@ -197,7 +200,7 @@ internal sealed class SandboxScreen : IScreen
         if (input.Ctrl && input.Pressed(Keys.Y))
             Redo();
         if (input.Pressed(Keys.Home))
-            _view.ZoomOutFully();
+            _view.ShowWholeField();
         if (!input.Ctrl && input.Pressed(Keys.R))
             Randomize();
         if (input.Pressed(Keys.Delete))
@@ -206,7 +209,6 @@ internal sealed class SandboxScreen : IScreen
 
     private void HandleBoardMouse(InputState input)
     {
-        // 座標は盤面の繰り返しのどこでもよい(書き換えるときに盤面の中へ回り込む)
         _hoverCell = _view.CellUnderMouse(input);
         _hoverVisible = !input.UiWantsMouse && !_view.IsPanning;
 
@@ -223,7 +225,8 @@ internal sealed class SandboxScreen : IScreen
             return;
         }
 
-        if (input.UiWantsMouse || _view.IsPanning || !input.LeftPressed)
+        // 描く・置くは遊ぶ範囲の中から始める
+        if (input.UiWantsMouse || _view.IsPanning || !input.LeftPressed || !_view.InField(_hoverCell))
             return;
 
         switch (_tool)
@@ -231,7 +234,8 @@ internal sealed class SandboxScreen : IScreen
             case Tool.Stamp:
                 RecordUndo();
                 var origin = StampOrigin(_hoverCell);
-                _session.Stamp(_stamp, origin.X, origin.Y);
+                // 範囲からはみ出した部分は置かない
+                _session.Stamp(_stamp, origin.X, origin.Y, clip: Field);
                 break;
             case Tool.Draw:
             case Tool.Erase:
@@ -258,7 +262,9 @@ internal sealed class SandboxScreen : IScreen
         int x = from.X, y = from.Y;
         while (true)
         {
-            _session.SetCell(x, y, alive);
+            // 範囲の外へ出た部分は描かない
+            if (Field.Contains(x, y))
+                _session.SetCell(x, y, alive);
             if (x == to.X && y == to.Y)
                 break;
             int doubled = 2 * error;
@@ -339,7 +345,7 @@ internal sealed class SandboxScreen : IScreen
             ImGui.SameLine();
             if (ImGui.Button("全消去 (Delete)")) Clear();
             ImGui.SameLine();
-            if (ImGui.Button("引いて見る (Home)")) _view.ZoomOutFully();
+            if (ImGui.Button("範囲全体 (Home)")) _view.ShowWholeField();
 
             if (ImGui.Button("盤面を保存…")) _openSavePopup = true;
             ImGui.SameLine();
@@ -409,7 +415,7 @@ internal sealed class SandboxScreen : IScreen
         if (!ImGui.BeginPopupModal(popupName, ref open, ImGuiWindowFlags.AlwaysAutoResize))
             return;
 
-        ImGui.TextUnformatted("盤面の生きているセルを、RLEファイルとして保存します。");
+        ImGui.TextUnformatted("遊ぶ範囲の中の生きているセルを、RLEファイルとして保存します。");
         ImGui.TextDisabled("保存した配置は、パターンの一覧からスタンプとして置けます。");
         ImGui.SetNextItemWidth(300 * UiSetup.Scale);
         bool submitted = ImGui.InputText("名前", ref _saveName, 64, ImGuiInputTextFlags.EnterReturnsTrue);
@@ -434,7 +440,7 @@ internal sealed class SandboxScreen : IScreen
             name = $"盤面-{DateTime.Now:yyyyMMdd-HHmmss}";
 
         var snapshot = _session.CaptureSnapshot();
-        var pattern = Pattern.FromBoard(snapshot.Cells, BoardSize, BoardSize, name, out _);
+        var pattern = Pattern.FromBoard(snapshot.Cells, BoardSize, BoardSize, name, out _, Field.Left, Field.Top, Field.Width, Field.Height);
         if (pattern is null)
         {
             ShowMessage("盤面に生きたセルが無いため、保存しませんでした。");
@@ -515,7 +521,7 @@ internal sealed class SandboxScreen : IScreen
     private void Randomize()
     {
         RecordUndo();
-        _session.Randomize(RandomDensity, Environment.TickCount);
+        _session.RandomizeRegion(RandomDensity, Environment.TickCount, Field);
     }
 
     private void Clear()

@@ -56,7 +56,9 @@ internal sealed class ChallengeScreen : IScreen
         {
             Paused = true,
         };
-        _view = new BoardView(services, ChallengeRules.BoardSize, ChallengeRules.BoardSize);
+        // セルを置けるのは中央の枠だけなので、表示する範囲の全体を普通の明るさで描く
+        _view = new BoardView(services, ChallengeRules.BoardSize, ChallengeRules.BoardSize,
+            new CellRegion(0, 0, ChallengeRules.BoardSize, ChallengeRules.BoardSize));
         _overlay = new BoardOverlay(services);
     }
 
@@ -111,11 +113,8 @@ internal sealed class ChallengeScreen : IScreen
     {
         _view.Draw(_session);
         _overlay.Begin(_view.Camera);
-        // 盤面は繰り返して描いているので、枠は画面の中央に最も近い繰り返しの位置に描く
-        var area = Area;
-        area.Offset(_view.NearestCopyOffset(area.Center));
-        _overlay.DrawRectangleOutline(_view.Camera, area, BoardColors.Accent * (_phase == Phase.Placing ? 0.9f : 0.35f), 2f);
-        if (_phase == Phase.Placing && _hoverVisible && Area.Contains(_view.Wrap(_hoverCell)))
+        _overlay.DrawRectangleOutline(_view.Camera, Area, BoardColors.Accent * (_phase == Phase.Placing ? 0.9f : 0.35f), 2f);
+        if (_phase == Phase.Placing && _hoverVisible && Area.Contains(_hoverCell))
             _overlay.DrawRectangleOutline(_view.Camera, new Rectangle(_hoverCell.X, _hoverCell.Y, 1, 1), BoardColors.Highlight * 0.8f, 1.5f);
         _overlay.End();
     }
@@ -129,12 +128,11 @@ internal sealed class ChallengeScreen : IScreen
             Start();
             return;
         }
-        var wrapped = _view.Wrap(_hoverCell);
-        if (input.UiWantsMouse || _view.IsPanning || !input.LeftPressed || !Area.Contains(wrapped))
+        if (input.UiWantsMouse || _view.IsPanning || !input.LeftPressed || !Area.Contains(_hoverCell))
             return;
 
         // 左クリックで、置いてあれば消し、無ければ置く
-        var cell = new Cell(wrapped.X, wrapped.Y);
+        var cell = new Cell(_hoverCell.X, _hoverCell.Y);
         if (_seed.Remove(cell))
         {
             _session.SetCell(cell.X, cell.Y, false);
@@ -317,7 +315,7 @@ internal sealed class ChallengeScreen : IScreen
         else
         {
             ImGui.TextUnformatted($"{ChallengeRules.MaxGenerations:N0} 世代を超えても落ち着かなかったため、記録の対象外です。");
-            ImGui.TextDisabled("ずっと増え続ける配置か、盤面を一周したグライダーとぶつかった可能性があります。");
+            ImGui.TextDisabled("ずっと増え続ける配置か、とても長く続く配置です。");
         }
 
         if (ImGui.Button("同じ配置でもう一度"))
